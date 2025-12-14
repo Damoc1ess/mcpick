@@ -132,11 +132,19 @@ async function read_project_mcp_servers(): Promise<string[]> {
 }
 
 /**
- * Read MCP servers from ~/.claude.json -> mcpServers (user scope)
+ * Read MCP servers from ~/.claude.json -> mcpServers (top-level, user scope)
  */
 async function read_user_mcp_servers(): Promise<string[]> {
-	const config = await read_claude_config();
-	return Object.keys(config.mcpServers || {});
+	const config_path = get_claude_config_path();
+	try {
+		await access(config_path);
+		const content = await readFile(config_path, 'utf-8');
+		const parsed = JSON.parse(content);
+		const servers = parsed.mcpServers || {};
+		return Object.keys(servers);
+	} catch (error) {
+		return [];
+	}
 }
 
 /**
