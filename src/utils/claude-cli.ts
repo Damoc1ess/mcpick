@@ -106,7 +106,10 @@ export async function add_mcp_via_cli(
 /**
  * Remove an MCP server using Claude CLI
  */
-export async function remove_mcp_via_cli(name: string): Promise<CliResult> {
+export async function remove_mcp_via_cli(
+	name: string,
+	scope: McpScope,
+): Promise<CliResult> {
 	// Check if CLI is available
 	const cli_available = await check_claude_cli();
 	if (!cli_available) {
@@ -117,7 +120,7 @@ export async function remove_mcp_via_cli(name: string): Promise<CliResult> {
 	}
 
 	try {
-		await execAsync(`claude mcp remove ${shell_escape(name)}`);
+		await execAsync(`claude mcp remove ${shell_escape(name)} -s ${scope}`);
 		return { success: true };
 	} catch (error) {
 		const message =

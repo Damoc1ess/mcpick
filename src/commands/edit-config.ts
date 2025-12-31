@@ -108,7 +108,7 @@ export async function edit_config(): Promise<void> {
 
 			// Remove servers
 			for (const name of servers_to_remove) {
-				const result = await remove_mcp_via_cli(name);
+				const result = await remove_mcp_via_cli(name, scope);
 				if (result.success) {
 					success_count++;
 				} else {
