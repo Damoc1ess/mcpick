@@ -39,3 +39,9 @@ export type MenuAction =
 // - project: Shared via .mcp.json in project root
 // - user: Global in ~/.claude.json for all projects
 export type McpScope = 'local' | 'project' | 'user';
+
+// Server with source path information for proper removal
+export interface ServerWithSource {
+	name: string;
+	sourcePath: string; // Directory where the server is actually installed
+}

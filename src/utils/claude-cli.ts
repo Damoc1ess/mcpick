@@ -90,6 +90,11 @@ export async function add_mcp_via_cli(
 
 	const command = build_add_command(server, scope);
 
+	// Debug: log the server config and command being executed
+	console.log(`[DEBUG] Adding server: ${server.name}`);
+	console.log(`[DEBUG] Server config: command=${('command' in server) ? server.command : 'N/A'}, args=${('args' in server) ? JSON.stringify(server.args) : 'N/A'}`);
+	console.log(`[DEBUG] Executing: ${command}`);
+
 	try {
 		await execAsync(command);
 		return { success: true };
@@ -105,10 +110,14 @@ export async function add_mcp_via_cli(
 
 /**
  * Remove an MCP server using Claude CLI
+ * @param name - Server name to remove
+ * @param scope - Scope to remove from
+ * @param cwd - Optional working directory to run the command from (for local scope servers installed in parent dirs)
  */
 export async function remove_mcp_via_cli(
 	name: string,
 	scope: McpScope,
+	cwd?: string,
 ): Promise<CliResult> {
 	// Check if CLI is available
 	const cli_available = await check_claude_cli();
@@ -120,7 +129,8 @@ export async function remove_mcp_via_cli(
 	}
 
 	try {
-		await execAsync(`claude mcp remove ${shell_escape(name)} -s ${scope}`);
+		const options = cwd ? { cwd } : undefined;
+		await execAsync(`claude mcp remove ${shell_escape(name)} -s ${scope}`, options);
 		return { success: true };
 	} catch (error) {
 		const message =

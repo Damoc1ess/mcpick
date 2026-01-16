@@ -3,6 +3,8 @@ import {
 	create_config_from_servers,
 	get_enabled_servers,
 	get_enabled_servers_for_scope,
+	get_enabled_servers_full_for_scope,
+	get_local_servers_with_source,
 	read_claude_config,
 	write_claude_config,
 } from '../core/config.js';
@@ -10,7 +12,43 @@ import {
 	get_all_available_servers,
 	sync_servers_to_registry,
 } from '../core/registry.js';
-import { McpScope } from '../types.js';
+import { McpScope, McpServer, ServerWithSource } from '../types.js';
+
+/**
+ * Compare two server configurations to check if they are different
+ * Returns true if the configurations differ
+ */
+function server_configs_differ(registry_server: McpServer, claude_server: McpServer): boolean {
+	// Compare command
+	if ('command' in registry_server && 'command' in claude_server) {
+		if (registry_server.command !== claude_server.command) {
+			return true;
+		}
+	}
+
+	// Compare args
+	if ('args' in registry_server && 'args' in claude_server) {
+		const registry_args = registry_server.args || [];
+		const claude_args = claude_server.args || [];
+		if (JSON.stringify(registry_args) !== JSON.stringify(claude_args)) {
+			return true;
+		}
+	}
+
+	// Compare URL for http/sse transports
+	if ('url' in registry_server && 'url' in claude_server) {
+		if (registry_server.url !== claude_server.url) {
+			return true;
+		}
+	}
+
+	// Compare type/transport
+	if (registry_server.type !== claude_server.type) {
+		return true;
+	}
+
+	return false;
+}
 import {
 	add_mcp_via_cli,
 	check_claude_cli,
@@ -58,6 +96,12 @@ export async function edit_config(): Promise<void> {
 		// Get currently enabled servers for the selected scope
 		const currently_enabled = await get_enabled_servers_for_scope(scope);
 
+		// For local scope, get servers with their source paths for proper removal
+		let local_servers_with_source: ServerWithSource[] = [];
+		if (scope === 'local') {
+			local_servers_with_source = await get_local_servers_with_source();
+		}
+
 		const server_choices = all_servers.map((server) => ({
 			value: server.name,
 			label: server.name,
@@ -79,7 +123,18 @@ export async function edit_config(): Promise<void> {
 			selected_server_names.includes(server.name),
 		);
 
-		// Determine which servers to add and remove
+		// DEBUG: Log all_servers to see what config is being used
+		console.log('[DEBUG edit-config] all_servers for aws-api:');
+		const aws_server = all_servers.find(s => s.name === 'aws-api');
+		if (aws_server) {
+			console.log(`  command: ${('command' in aws_server) ? aws_server.command : 'N/A'}`);
+			console.log(`  args: ${('args' in aws_server) ? JSON.stringify(aws_server.args) : 'N/A'}`);
+		}
+
+		// Get full configurations of currently enabled servers to detect config changes
+		const currently_enabled_full = await get_enabled_servers_full_for_scope(scope);
+
+		// Determine which servers to add, remove, and UPDATE
 		const servers_to_add = selected_server_names.filter(
 			(name) => !currently_enabled.includes(name),
 		);
@@ -87,13 +142,49 @@ export async function edit_config(): Promise<void> {
 			(name) => !selected_server_names.includes(name),
 		);
 
+		// Find servers that are enabled but have different config than registry
+		// These need to be removed and re-added to update their configuration
+		const servers_to_update: string[] = [];
+		for (const name of selected_server_names) {
+			// Skip if it's a new server (will be added anyway)
+			if (servers_to_add.includes(name)) continue;
+
+			const registry_server = all_servers.find((s) => s.name === name);
+			const claude_server = currently_enabled_full.find((s) => s.name === name);
+
+			if (registry_server && claude_server) {
+				if (server_configs_differ(registry_server, claude_server)) {
+					servers_to_update.push(name);
+					log.info(`Server "${name}" has different config in registry, will update`);
+				}
+			}
+		}
+
 		// If CLI is available, use it for add/remove operations
 		if (cli_available && (scope === 'local' || scope === 'project')) {
 			let success_count = 0;
 			let error_count = 0;
 
-			// Add new servers
-			for (const name of servers_to_add) {
+			// First, remove servers that need to be updated (will be re-added with new config)
+			for (const name of servers_to_update) {
+				let cwd: string | undefined;
+				if (scope === 'local') {
+					const server_info = local_servers_with_source.find(s => s.name === name);
+					if (server_info) {
+						cwd = server_info.sourcePath;
+					}
+				}
+
+				const result = await remove_mcp_via_cli(name, scope, cwd);
+				if (!result.success) {
+					error_count++;
+					log.warn(`Failed to remove ${name} for update: ${result.error}`);
+				}
+			}
+
+			// Add new servers AND servers that were removed for update
+			const servers_to_add_all = [...servers_to_add, ...servers_to_update];
+			for (const name of servers_to_add_all) {
 				const server = all_servers.find((s) => s.name === name);
 				if (server) {
 					const result = await add_mcp_via_cli(server, scope);
@@ -106,9 +197,18 @@ export async function edit_config(): Promise<void> {
 				}
 			}
 
-			// Remove servers
+			// Remove servers that user deselected
 			for (const name of servers_to_remove) {
-				const result = await remove_mcp_via_cli(name, scope);
+				// For local scope, find the source path where the server is actually installed
+				let cwd: string | undefined;
+				if (scope === 'local') {
+					const server_info = local_servers_with_source.find(s => s.name === name);
+					if (server_info) {
+						cwd = server_info.sourcePath;
+					}
+				}
+
+				const result = await remove_mcp_via_cli(name, scope, cwd);
 				if (result.success) {
 					success_count++;
 				} else {
@@ -123,13 +223,14 @@ export async function edit_config(): Promise<void> {
 				note(
 					`Configuration updated with ${error_count} errors.\n` +
 						`Scope: ${get_scope_description(scope)}\n` +
-						`Added: ${servers_to_add.length}, Removed: ${servers_to_remove.length}`,
+						`Added: ${servers_to_add.length}, Removed: ${servers_to_remove.length}, Updated: ${servers_to_update.length}`,
 				);
 			} else {
 				note(
 					`Configuration updated!\n` +
 						`Scope: ${get_scope_description(scope)}\n` +
-						`Enabled servers: ${selected_servers.length}`,
+						`Enabled servers: ${selected_servers.length}` +
+						(servers_to_update.length > 0 ? `\nUpdated: ${servers_to_update.length} server(s)` : ''),
 				);
 			}
 		} else {
