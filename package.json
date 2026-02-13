@@ -35,8 +35,8 @@
 	},
 	"devDependencies": {
 		"@changesets/cli": "^2.29.8",
-		"@types/node": "^24.10.1",
-		"prettier": "^3.7.4",
+		"@types/node": "^24.10.13",
+		"prettier": "^3.8.1",
 		"typescript": "^5.9.3"
 	}
 }
