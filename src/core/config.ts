@@ -91,7 +91,7 @@ async function read_claude_config_full(): Promise<any> {
 }
 
 /**
- * Read MCP servers for local scope (current project)
+ * Read MCP servers for local scope (current project only)
  * Stored in ~/.claude.json -> projects[cwd].mcpServers
  * Also searches parent directories since Claude CLI may store config at parent level
  * Returns servers with their source path for proper removal
